@@ -1,0 +1,9 @@
+.idea/
+bin/
+vendor/
+.env
+.DS_Store
+.coverage
+conf/
+!conf/example.yaml
+/data
