@@ -10,7 +10,7 @@ COPY go.mod go.sum* ./
 RUN if [ -f go.sum ]; then go mod download; fi
 
 # Copy source code
-COPY *.go ./
+COPY . ./
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o proxyai .
