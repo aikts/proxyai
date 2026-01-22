@@ -20,6 +20,8 @@ func ProxyHandler(w http.ResponseWriter, r *http.Request, target types.ProxyTarg
 	requestStart := time.Now()
 	requestID := fmt.Sprintf("%s-%d", r.Method, requestStart.UnixNano())
 
+	var bodyReader io.Reader
+
 	// Log incoming request
 	if config.Debug {
 		log.Printf("[%s] Incoming request: %s %s (target: %s)", requestID, r.Method, r.URL.Path, target.TargetHost)
@@ -37,30 +39,31 @@ func ProxyHandler(w http.ResponseWriter, r *http.Request, target types.ProxyTarg
 		log.Printf("[%s] Query params: %s", requestID, r.URL.RawQuery)
 		log.Printf("[%s] Content-Length: %d", requestID, r.ContentLength)
 		log.Printf("[%s] Remote addr: %s", requestID, r.RemoteAddr)
-	} else {
-		log.Printf("[%s] Incoming request: %s %s -> %s", requestID, r.Method, r.URL.Path, target.TargetHost)
-	}
 
-	// Read and optionally log request body
-	var requestBody []byte
-	if r.Body != nil {
-		var err error
-		requestBody, err = io.ReadAll(r.Body)
-		r.Body.Close()
-		if err != nil {
-			http.Error(w, "Failed to read request body: "+err.Error(), http.StatusInternalServerError)
-			log.Printf("[%s] Error reading request body: %v", requestID, err)
-			return
-		}
+		if r.Body != nil {
+			// In debug mode, read body for logging
+			requestBody, err := io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			if err != nil {
+				http.Error(w, "Failed to read request body: "+err.Error(), http.StatusInternalServerError)
+				log.Printf("[%s] Error reading request body: %v", requestID, err)
+				return
+			}
 
-		if config.Debug && len(requestBody) > 0 {
-			const maxBodyLog = 4096
-			if len(requestBody) > maxBodyLog {
-				log.Printf("[%s] Request body (%d bytes, truncated): %s...", requestID, len(requestBody), string(requestBody[:maxBodyLog]))
-			} else {
-				log.Printf("[%s] Request body (%d bytes): %s", requestID, len(requestBody), string(requestBody))
+			if len(requestBody) > 0 {
+				const maxBodyLog = 4096
+				if len(requestBody) > maxBodyLog {
+					log.Printf("[%s] Request body (%d bytes, truncated): %s...", requestID, len(requestBody), string(requestBody[:maxBodyLog]))
+				} else {
+					log.Printf("[%s] Request body (%d bytes): %s", requestID, len(requestBody), string(requestBody))
+				}
+				bodyReader = bytes.NewReader(requestBody)
 			}
 		}
+	} else {
+		log.Printf("[%s] Incoming request: %s %s -> %s", requestID, r.Method, r.URL.Path, target.TargetHost)
+		// Without debug, pass body directly to preserve streaming
+		bodyReader = r.Body
 	}
 
 	// Extract the actual API path by removing the proxy prefix
@@ -74,19 +77,11 @@ func ProxyHandler(w http.ResponseWriter, r *http.Request, target types.ProxyTarg
 		RawQuery: r.URL.RawQuery,
 	}
 
-	if config.Debug {
-		log.Printf("[%s] Proxying to: %s", requestID, targetURL.String())
-	}
-
 	// Create a context with timeout for the request
 	ctx, cancel := context.WithTimeout(r.Context(), config.RequestTimeout)
 	defer cancel()
 
 	// Create a new request to the target URL
-	var bodyReader io.Reader
-	if len(requestBody) > 0 {
-		bodyReader = bytes.NewReader(requestBody)
-	}
 	targetReq, err := http.NewRequestWithContext(ctx, r.Method, targetURL.String(), bodyReader)
 	if err != nil {
 		http.Error(w, "Failed to create request: "+err.Error(), http.StatusInternalServerError)
@@ -139,7 +134,7 @@ func ProxyHandler(w http.ResponseWriter, r *http.Request, target types.ProxyTarg
 		errMsg := "Failed to execute request: " + err.Error()
 
 		// Check for context deadline exceeded
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			statusCode = http.StatusGatewayTimeout
 			errMsg = "Request timed out"
 		}
@@ -150,8 +145,10 @@ func ProxyHandler(w http.ResponseWriter, r *http.Request, target types.ProxyTarg
 	}
 	defer resp.Body.Close()
 
-	log.Printf("[%s] Received response: status=%d, content-type=%s, content-length=%s",
-		requestID, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Length"))
+	if config.Debug {
+		log.Printf("[%s] Received response: status=%d, content-type=%s, content-length=%s",
+			requestID, resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Content-Length"))
+	}
 
 	// Copy the response headers back to the client
 	copyHeaders(w.Header(), resp.Header)
@@ -188,7 +185,9 @@ func ProxyHandler(w http.ResponseWriter, r *http.Request, target types.ProxyTarg
 	}
 
 	// Stream the response body back to the client
-	log.Printf("[%s] Starting response streaming (SSE=%v)", requestID, isSSE)
+	if config.Debug {
+		log.Printf("[%s] Starting response streaming (SSE=%v)", requestID, isSSE)
+	}
 	bytesTransferred, err := streamResponse(w, resp.Body, isSSE, requestID)
 
 	// Calculate request duration
@@ -207,8 +206,6 @@ func streamResponse(w http.ResponseWriter, body io.ReadCloser, isSSE bool, reque
 	var totalBytes int64
 	buf := make([]byte, 4096)
 	readCount := 0
-
-	log.Printf("[%s] Starting to stream response", requestID)
 
 	for {
 		n, err := body.Read(buf)
