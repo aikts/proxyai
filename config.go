@@ -32,6 +32,7 @@ func init() {
 	flag.DurationVar(&config.RequestTimeout, "timeout", defaultConfig.RequestTimeout, "Request timeout")
 	flag.DurationVar(&config.ReadHeaderTimeout, "header-timeout", defaultConfig.ReadHeaderTimeout, "Read header timeout")
 	flag.BoolVar(&config.Debug, "debug", defaultConfig.Debug, "Enable debug logging")
+	flag.BoolVar(&config.DisableForwardedFor, "no-forwarded", defaultConfig.DisableForwardedFor, "Disable X-Forwarded-* headers")
 
 	// Custom proxy target definition flag
 	var customTargets string

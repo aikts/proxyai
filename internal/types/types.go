@@ -10,9 +10,10 @@ type ProxyTarget struct {
 
 // Config represents the global application configuration
 type Config struct {
-	ProxyTargets      []ProxyTarget
-	ListenAddr        string
-	RequestTimeout    time.Duration
-	ReadHeaderTimeout time.Duration
-	Debug             bool
+	ProxyTargets        []ProxyTarget
+	ListenAddr          string
+	RequestTimeout      time.Duration
+	ReadHeaderTimeout   time.Duration
+	Debug               bool
+	DisableForwardedFor bool
 }

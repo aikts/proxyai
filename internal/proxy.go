@@ -106,9 +106,11 @@ func ProxyHandler(w http.ResponseWriter, r *http.Request, target types.ProxyTarg
 		}
 	}
 
-	// Add X-Forwarded headers
-	targetReq.Header.Set("X-Forwarded-For", getClientIP(r))
-	targetReq.Header.Set("X-Forwarded-Proto", getScheme(r))
+	// Add X-Forwarded headers (unless disabled)
+	if !config.DisableForwardedFor {
+		targetReq.Header.Set("X-Forwarded-For", getClientIP(r))
+		targetReq.Header.Set("X-Forwarded-Proto", getScheme(r))
+	}
 
 	// Ensure the Host header is set correctly
 	targetReq.Host = target.TargetHost
